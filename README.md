@@ -178,18 +178,26 @@ npm publish --otp=<6-digit code>  # builds via prepublishOnly; access:public is 
    Actions publisher: repo `asset1gmo/remotion-kit`, workflow `publish.yml`.
 2. That's it — no token or secret. OIDC authenticates CI and adds provenance.
 
-### Releasing thereafter
+### Releasing thereafter — just push
+
+Every push to `main` publishes the **next patch** automatically. The workflow
+reads the current version from npm, increments the patch, and publishes it — you
+never edit the version:
 
 ```bash
-npm version patch            # or minor / major — bumps package.json + commits
-git push --follow-tags       # push to main; the workflow publishes the new version
+git commit -am "whatever you changed"
+git push           # -> CI publishes the next patch (e.g. 0.1.1, then 0.1.2, ...)
 ```
 
-The workflow **skips** when the version already exists on npm, so ordinary pushes
-that don't bump the version are no-ops rather than failures. To ship a prerelease
-off the `latest` tag, bump to e.g. `0.2.0-test.0` and it publishes under that
-version (adjust the workflow's `npm publish` to add `--tag test` if you want it
-kept off `latest`).
+Notes on this model:
+
+- **Every push to `main` is a release**, including docs-only pushes. Batch work
+  on a branch and merge when you actually want a version out.
+- The `version` field in `package.json` is **not** the source of truth — npm is.
+  CI computes the next number from the registry and never commits back to git.
+- To jump a **minor/major** (auto-bump only does patches), publish that base
+  version once manually (`npm version minor && npm publish --otp=<code>`); CI then
+  keeps patching from there (0.2.0 → 0.2.1 → …).
 
 > **Token alternative:** instead of Trusted Publishing you can store an npm
 > **automation** token as the `NPM_TOKEN` repo secret and publish with

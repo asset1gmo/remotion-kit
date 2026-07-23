@@ -1,23 +1,28 @@
 name: Publish to npm
 
-# Publishes @asset1gmo/remotion-kit on every push to main — but only when the
-# version in package.json is NEW. npm versions are immutable, so pushes that
-# don't bump the version are skipped (not failed). To release: bump the version,
-# commit, push to main.
+# Auto-publish on every push to main. The next patch version is computed from
+# whatever is currently on npm and published — you never bump the version by
+# hand; just push code. Nothing is committed back to git, so there is no bot
+# commit and no need to pull after pushing.
 #
-# Auth uses npm Trusted Publishing (OIDC) — no token or secret to manage, and it
-# satisfies the account's 2FA requirement. One-time setup (see README "Publishing"):
+# NOTE: every push to main publishes a new version (yes, even docs-only pushes).
+# The version field in package.json is not the source of truth here — npm is.
+#
+# Auth uses npm Trusted Publishing (OIDC) — no token or secret, and it satisfies
+# the account's 2FA. One-time setup (see README "Publishing"):
 #   1. Publish the package once manually so it exists on npm.
 #   2. npmjs.com -> the package -> Settings -> Trusted Publisher -> add:
-#        Provider: GitHub Actions
-#        Organization/user: asset1gmo
-#        Repository: remotion-kit
-#        Workflow filename: publish.yml
-#   3. Push to main.
+#        Provider: GitHub Actions,  user: asset1gmo,
+#        repository: remotion-kit,  workflow: publish.yml
 
 on:
   push:
     branches: [main]
+
+# Serialize runs so two quick pushes can't race to the same version number.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -40,13 +45,17 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: Publish if the version is new
+      - name: Compute next version and publish
         run: |
           NAME="$(node -p "require('./package.json').name")"
-          VERSION="$(node -p "require('./package.json').version")"
-          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
-            echo "$NAME@$VERSION is already on npm — nothing to publish."
+          # Current latest on npm; empty if the package isn't published yet.
+          LATEST="$(npm view "$NAME" version 2>/dev/null || true)"
+          if [ -z "$LATEST" ]; then
+            NEXT="$(node -p "require('./package.json').version")"
+            echo "Not yet on npm — publishing package.json version $NEXT"
           else
-            echo "Publishing $NAME@$VERSION"
-            npm publish --access public
+            NEXT="$(node -e "const v='$LATEST'.split('.'); v[2]=(+v[2]+1); console.log(v.join('.'))")"
+            echo "Latest on npm is $LATEST — publishing $NEXT"
           fi
+          npm pkg set version="$NEXT"   # workspace only; not committed
+          npm publish --access public
