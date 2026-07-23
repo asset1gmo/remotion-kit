@@ -1,0 +1,50 @@
+{
+  "name": "@asset1gmo/remotion-kit",
+  "version": "0.1.0",
+  "description": "Load Lottie-JSON, Dot-Lottie and Remotion Animations",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./compress": {
+      "types": "./dist/compress.d.ts",
+      "import": "./dist/compress.js"
+    }
+  },
+  "bin": {
+    "remotion-animation-build": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@remotion/player": "^4.0.483",
+    "esbuild": "^0.24.2",
+    "fflate": "^0.8.2",
+    "lottie-web": "^5",
+    "remotion": "^4.0.483"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "~5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
