@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "description": "Load Lottie-JSON, Dot-Lottie and Remotion Animations",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asset1gmo/remotion-kit.git"
+  },
+  "homepage": "https://github.com/asset1gmo/remotion-kit#readme",
+  "bugs": "https://github.com/asset1gmo/remotion-kit/issues",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
