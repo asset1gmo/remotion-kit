@@ -1,0 +1,52 @@
+name: Publish to npm
+
+# Publishes @asset1gmo/remotion-kit on every push to main — but only when the
+# version in package.json is NEW. npm versions are immutable, so pushes that
+# don't bump the version are skipped (not failed). To release: bump the version,
+# commit, push to main.
+#
+# Auth uses npm Trusted Publishing (OIDC) — no token or secret to manage, and it
+# satisfies the account's 2FA requirement. One-time setup (see README "Publishing"):
+#   1. Publish the package once manually so it exists on npm.
+#   2. npmjs.com -> the package -> Settings -> Trusted Publisher -> add:
+#        Provider: GitHub Actions
+#        Organization/user: asset1gmo
+#        Repository: remotion-kit
+#        Workflow filename: publish.yml
+#   3. Push to main.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write # required for Trusted Publishing (OIDC) + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted Publishing requires npm >= 11.5.1; runners still ship npm 10.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Publish if the version is new
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already on npm — nothing to publish."
+          else
+            echo "Publishing $NAME@$VERSION"
+            npm publish --access public
+          fi

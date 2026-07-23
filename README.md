@@ -158,21 +158,43 @@ your working directory; pass `remotionVersion` to set it explicitly.
 
 ## Publishing
 
-Published as `@asset1gmo/remotion-kit` from the `asset1gmo` npm account.
+Published as `@asset1gmo/remotion-kit`. After a one-time setup, every push to
+`main` that bumps the version publishes automatically via GitHub Actions
+([.github/workflows/publish.yml](.github/workflows/publish.yml)).
+
+### First publish (manual, once)
+
+The package must exist on npm before Trusted Publishing can be configured. The
+account uses 2FA, so pass an OTP:
 
 ```bash
-npm login                 # log in as asset1gmo
-npm whoami                # should print: asset1gmo
-npm publish               # builds first (prepublishOnly) and publishes; access:public is set
+npm whoami                        # asset1gmo
+npm publish --otp=<6-digit code>  # builds via prepublishOnly; access:public is set
 ```
 
-Because npm versions are permanent, keep test releases off the `latest` tag with a
-prerelease version and an explicit tag:
+### Enable auto-publish (one-time)
+
+1. On npmjs.com → the package → **Settings → Trusted Publisher**, add a GitHub
+   Actions publisher: repo `asset1gmo/remotion-kit`, workflow `publish.yml`.
+2. That's it — no token or secret. OIDC authenticates CI and adds provenance.
+
+### Releasing thereafter
 
 ```bash
-npm version 0.1.0-test.0 --no-git-tag-version
-npm publish --tag test    # install with: npm install @asset1gmo/remotion-kit@test
+npm version patch            # or minor / major — bumps package.json + commits
+git push --follow-tags       # push to main; the workflow publishes the new version
 ```
+
+The workflow **skips** when the version already exists on npm, so ordinary pushes
+that don't bump the version are no-ops rather than failures. To ship a prerelease
+off the `latest` tag, bump to e.g. `0.2.0-test.0` and it publishes under that
+version (adjust the workflow's `npm publish` to add `--tag test` if you want it
+kept off `latest`).
+
+> **Token alternative:** instead of Trusted Publishing you can store an npm
+> **automation** token as the `NPM_TOKEN` repo secret and publish with
+> `NODE_AUTH_TOKEN`. It works today but npm is deprecating 2FA-bypass tokens, so
+> OIDC is preferred.
 
 ## Notes
 
