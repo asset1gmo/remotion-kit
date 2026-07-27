@@ -43,20 +43,31 @@ a second React breaks hooks). Everything else installs for you.
 
 ## Loader mode
 
-`loadAnimation` renders into a container and returns an **`AnimationHandle`** — a
-controllable instance shaped **exactly like a lottie-web `AnimationItem`**: same
-methods (`play`/`pause`/`setSpeed`/`goToAndStop`/…), same live properties
-(`currentFrame`, `totalFrames`, `isPaused`, `playDirection`, …), and the same
-events (`enterFrame`, `complete`, `loopComplete`, `DOMLoaded`, …). Driving a
-Remotion `.zip` is therefore identical to driving a Lottie file.
+Loading is **two steps** — an async decode, then a synchronous mount:
+
+1. **`unzipAnimation(src, options?)`** — async. Fetches and unzips/decodes the
+   source (dotLottie → JSON, Remotion `.zip` → evaluated component). All the I/O
+   lives here, and so does the Lottie `transform` hook. Returns a
+   `PreparedAnimation`.
+2. **`loadAnimation({ container, animation, … })`** — synchronous. Mounts the
+   prepared animation and returns an **`AnimationHandle`** — a controllable
+   instance shaped **exactly like a lottie-web `AnimationItem`**: same methods
+   (`play`/`pause`/`setSpeed`/`goToAndStop`/…), same live properties
+   (`currentFrame`, `totalFrames`, `isPaused`, …), same events (`enterFrame`,
+   `complete`, `loopComplete`, `DOMLoaded`, …). Driving a Remotion `.zip` is
+   identical to driving a Lottie file.
 
 ```ts
-import { loadAnimation } from "@asset1gmo/remotion-kit";
-import type { AnimationHandle } from "@asset1gmo/remotion-kit";
+import { unzipAnimation, loadAnimation } from "@asset1gmo/remotion-kit";
+import type { AnimationHandle, PreparedAnimation } from "@asset1gmo/remotion-kit";
 
-const anim: AnimationHandle = await loadAnimation({
+// 1. async — fetch + decode (do this once; reuse the result to remount)
+const prepared: PreparedAnimation = await unzipAnimation("/animations/promo.zip");
+
+// 2. sync — mount
+const anim: AnimationHandle = loadAnimation({
   container: el,
-  src: "/animations/promo.zip", // .zip (Remotion) | .json / .lottie (Lottie)
+  animation: prepared,
   loop: true,
   autoplay: true,
   speed: 1,
@@ -71,10 +82,13 @@ off();                            // addEventListener returns its unsubscribe
 anim.destroy();                   // tears down the backend + empties the container
 ```
 
+`prepared` also exposes what was decoded — `.data` (Lottie JSON) or
+`.component` + `.manifest` (Remotion) — and can be mounted more than once.
+
 ### Routing by format
 
-`src` is routed by extension; override with `format` for URLs that don't carry one
-(signed CDN links, blob URLs, API endpoints):
+`src` is routed by extension; override with `options.format` for URLs that don't
+carry one (signed CDN links, blob URLs, API endpoints):
 
 | `src` | Format | Backend |
 | --- | --- | --- |
@@ -84,12 +98,25 @@ anim.destroy();                   // tears down the backend + empties the contai
 | a parsed object | Lottie JSON | lottie-web |
 
 ```ts
-await loadAnimation({ container, src: signedUrl, format: "remotion" });
+const prepared = await unzipAnimation(signedUrl, { format: "remotion" });
 ```
 
-Each backend is **code-split behind a dynamic import**, so an app that only ever
-loads `.zip` never ships lottie-web, and an app that only ever loads Lottie never
-ships the Remotion runtime (it downloads on demand when the first `.zip` loads).
+Each backend is **code-split behind the dynamic import inside `unzipAnimation`**,
+so an app that only ever loads `.zip` never ships lottie-web, and an app that only
+ever loads Lottie never ships the Remotion runtime (it downloads on demand when
+the first `.zip` is prepared). Because `loadAnimation` only invokes the prepared
+animation's own `mount`, it stays backend-free and synchronous.
+
+### Recoloring / theming (Lottie only)
+
+The `transform` hook runs during `unzipAnimation`, on the decoded JSON, before
+mount:
+
+```ts
+const prepared = await unzipAnimation("/animations/logo.lottie", {
+  transform: (data) => recolorToTheme(data), // must return a NEW object
+});
+```
 
 ### Remotion vs lottie-web parity notes
 

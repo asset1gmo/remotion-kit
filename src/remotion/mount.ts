@@ -1,9 +1,11 @@
 import { createElement, createRef } from "react";
+import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { Player, type PlayerRef } from "@remotion/player";
 import { loadBundle, type LoadedBundle } from "./bundle.js";
 import { createEmitter } from "../core/emitter.js";
 import type { AnimationManifest } from "../core/manifest.js";
+import type { MountConfig, PreparedRemotionAnimation } from "../core/config.js";
 import type {
   AnimationDirection,
   AnimationEventCallback,
@@ -11,54 +13,42 @@ import type {
   AnimationEvents,
   AnimationHandle,
   AnimationSegment,
-  LoadAnimationConfig,
 } from "../core/handle.js";
 
 /**
- * Mount a Remotion `.zip` into a container and adapt its `<Player>` to the
- * shared {@link AnimationHandle}, so a Remotion animation is driven with the
- * exact lottie-web API.
+ * Fetch + evaluate a Remotion `.zip` and return a ready-to-mount animation. The
+ * expensive work (network, unzip, bundle eval) happens here, async; `mount` then
+ * renders the `<Player>` synchronously.
  *
  * Reached only via the lazy import in `load-animation.ts`, so the Remotion
  * runtime is code-split out of Lottie-only consumers.
  */
-export async function mountRemotion(
-  config: LoadAnimationConfig,
-): Promise<AnimationHandle> {
-  const { container, src } = config;
-  if (typeof src !== "string") {
-    throw new Error(
-      "[remotion-animation] a Remotion (.zip) animation needs a URL `src`, not a parsed object.",
-    );
-  }
-
+export async function prepareRemotion(
+  src: string,
+): Promise<PreparedRemotionAnimation> {
   const { component, manifest } = await loadBundle(src);
-  const ref = createRef<PlayerRef>();
-  const root = createRoot(container);
-  const handle = new RemotionHandle(ref, root, manifest, component, config);
-  handle.render();
-  await waitForRef(ref);
-  handle.onMounted();
-  return handle;
-}
 
-function waitForRef(
-  ref: { current: PlayerRef | null },
-  timeoutMs = 5000,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = performance.now();
-    const tick = () => {
-      if (ref.current) return resolve();
-      if (performance.now() - start > timeoutMs) {
-        return reject(
-          new Error("[remotion-animation] Remotion Player did not mount in time"),
+  return {
+    kind: "remotion",
+    component,
+    manifest,
+    mount(container: HTMLElement, config: MountConfig = {}): AnimationHandle {
+      const ref = createRef<PlayerRef>();
+      const root = createRoot(container);
+      const handle = new RemotionHandle(ref, root, manifest, component, config);
+      // flushSync forces React to render + commit synchronously, so the
+      // PlayerRef is attached by the time flushSync returns — no polling.
+      flushSync(() => handle.render());
+      if (!ref.current) {
+        root.unmount();
+        throw new Error(
+          "[remotion-animation] Remotion Player did not mount synchronously",
         );
       }
-      requestAnimationFrame(tick);
-    };
-    tick();
-  });
+      handle.onMounted();
+      return handle;
+    },
+  };
 }
 
 /**
@@ -94,7 +84,7 @@ class RemotionHandle implements AnimationHandle {
     private readonly root: Root,
     private readonly manifest: AnimationManifest,
     private readonly component: LoadedBundle["component"],
-    config: LoadAnimationConfig,
+    config: MountConfig,
   ) {
     this.fps = manifest.fps;
     this.duration = manifest.durationInFrames;

@@ -1,14 +1,15 @@
 /**
  * LOTTIE (TEMPORARY) — see the header note in `./decode.ts`.
  *
- * lottie-web's `AnimationItem` already *is* the handle contract (the contract
- * was modelled on it), so this adapter is a thin delegating shell: it adds
- * `kind`/`native` and forwards every member to the live `AnimationItem`. Getters
- * keep property reads (`currentFrame`, `isPaused`, …) live.
+ * `prepareLottie` does the async half (fetch + decode + transform) and returns a
+ * prepared animation whose `mount` runs lottie-web synchronously. lottie-web's
+ * `AnimationItem` already *is* the handle contract, so the handle is a thin
+ * delegating shell.
  */
 import lottieWeb from "lottie-web";
 import type { AnimationItem } from "lottie-web";
 import { loadLottie, type LottieData } from "./decode.js";
+import type { MountConfig, PreparedLottieAnimation } from "../core/config.js";
 import type {
   AnimationDirection,
   AnimationEventCallback,
@@ -16,31 +17,38 @@ import type {
   AnimationEvents,
   AnimationHandle,
   AnimationSegment,
-  LoadAnimationConfig,
 } from "../core/handle.js";
 
-export async function mountLottie(
-  config: LoadAnimationConfig,
-): Promise<AnimationHandle> {
-  const { container, src } = config;
+/** Fetch + decode (+ transform) a Lottie source into a ready-to-mount animation. */
+export async function prepareLottie(
+  src: string | Record<string, unknown>,
+  transform?: (data: LottieData) => LottieData,
+): Promise<PreparedLottieAnimation> {
   let data: LottieData =
     typeof src === "string" ? await loadLottie(src) : (src as LottieData);
-  if (config.transform) data = config.transform(data);
+  if (transform) data = transform(data);
 
-  const item = lottieWeb.loadAnimation({
-    container,
-    renderer: config.renderer ?? "svg",
-    loop: config.loop ?? true,
-    autoplay: config.autoplay ?? true,
-    name: config.name,
-    assetsPath: config.assetsPath,
-    initialSegment: config.initialSegment,
-    animationData: data,
-  });
-  if (config.speed !== undefined && config.speed !== 1) item.setSpeed(config.speed);
-  if (config.direction === -1) item.setDirection(-1);
-
-  return makeLottieHandle(item);
+  return {
+    kind: "lottie",
+    data,
+    mount(container: HTMLElement, config: MountConfig = {}): AnimationHandle {
+      const item = lottieWeb.loadAnimation({
+        container,
+        renderer: config.renderer ?? "svg",
+        loop: config.loop ?? true,
+        autoplay: config.autoplay ?? true,
+        name: config.name,
+        assetsPath: config.assetsPath,
+        initialSegment: config.initialSegment,
+        animationData: data,
+      });
+      if (config.speed !== undefined && config.speed !== 1) {
+        item.setSpeed(config.speed);
+      }
+      if (config.direction === -1) item.setDirection(-1);
+      return makeLottieHandle(item);
+    },
+  };
 }
 
 function makeLottieHandle(item: AnimationItem): AnimationHandle {
