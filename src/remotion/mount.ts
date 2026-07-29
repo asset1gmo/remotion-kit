@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { Player, type PlayerRef } from "@remotion/player";
 import { loadBundle, type LoadedBundle } from "./bundle.js";
 import { createEmitter } from "../core/emitter.js";
+import { registerEngine, type EngineMount } from "../core/registry.js";
 import type { AnimationManifest } from "../core/manifest.js";
 import type { MountConfig, PreparedRemotionAnimation } from "../core/config.js";
 import type {
@@ -16,40 +17,47 @@ import type {
 } from "../core/handle.js";
 
 /**
- * Fetch + evaluate a Remotion `.zip` and return a ready-to-mount animation. The
- * expensive work (network, unzip, bundle eval) happens here, async; `mount` then
- * renders the `<Player>` synchronously.
- *
- * Reached only via the lazy import in `load-animation.ts`, so the Remotion
- * runtime is code-split out of Lottie-only consumers.
+ * `prepareRemotion` registers the "remotion" engine and does the async work
+ * (network, unzip, bundle eval), returning plain data; `mountRemotion` renders
+ * the `<Player>` synchronously. This module is reached only via the lazy import
+ * in `load-animation.ts`, so the Remotion runtime is code-split out of
+ * Lottie-only consumers.
  */
 export async function prepareRemotion(
   src: string,
 ): Promise<PreparedRemotionAnimation> {
+  registerEngine("remotion", mountRemotion);
   const { component, manifest } = await loadBundle(src);
-
-  return {
-    kind: "remotion",
-    component,
-    manifest,
-    mount(container: HTMLElement, config: MountConfig = {}): AnimationHandle {
-      const ref = createRef<PlayerRef>();
-      const root = createRoot(container);
-      const handle = new RemotionHandle(ref, root, manifest, component, config);
-      // flushSync forces React to render + commit synchronously, so the
-      // PlayerRef is attached by the time flushSync returns — no polling.
-      flushSync(() => handle.render());
-      if (!ref.current) {
-        root.unmount();
-        throw new Error(
-          "[remotion-animation] Remotion Player did not mount synchronously",
-        );
-      }
-      handle.onMounted();
-      return handle;
-    },
-  };
+  return { kind: "remotion", component, manifest };
 }
+
+const mountRemotion: EngineMount = (container, animation, config) => {
+  if (animation.kind !== "remotion") {
+    throw new Error(
+      "[remotion-animation] remotion engine got a non-remotion animation",
+    );
+  }
+  const ref = createRef<PlayerRef>();
+  const root = createRoot(container);
+  const handle = new RemotionHandle(
+    ref,
+    root,
+    animation.manifest,
+    animation.component,
+    config,
+  );
+  // flushSync forces React to render + commit synchronously, so the PlayerRef is
+  // attached by the time flushSync returns — no polling.
+  flushSync(() => handle.render());
+  if (!ref.current) {
+    root.unmount();
+    throw new Error(
+      "[remotion-animation] Remotion Player did not mount synchronously",
+    );
+  }
+  handle.onMounted();
+  return handle;
+};
 
 /**
  * Adapts a `PlayerRef` to the lottie-web-shaped handle.

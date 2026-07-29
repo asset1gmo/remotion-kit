@@ -1,3 +1,4 @@
+import { getEngine } from "./core/registry.js";
 import type { AnimationHandle } from "./core/handle.js";
 import type {
   LoadAnimationConfig,
@@ -6,69 +7,60 @@ import type {
 } from "./core/config.js";
 
 /**
- * Decode an animation source into a ready-to-mount {@link PreparedAnimation}.
- * This is the **async** half — it does all the I/O:
+ * Fetch + decode an animation **URL** into a ready-to-mount
+ * {@link PreparedAnimation} (plain data). This is the **async** half — all the
+ * network I/O, plus the dynamic `import()` that loads + registers the engine:
  *
  *   - `.zip`    Remotion code bundle -> fetched, unzipped, evaluated
  *   - `.json`   raw Lottie JSON      -> fetched, parsed        (TEMPORARY)
  *   - `.lottie` dotLottie            -> fetched, unzipped       (TEMPORARY)
  *
- * The backend is code-split behind a dynamic import, so an app only ships the
- * one it actually prepares. Routing is by extension unless `options.format`
- * overrides it. The Lottie-only `transform` hook is applied here.
+ * For Lottie JSON you already hold (a bundled import, an API payload), there is
+ * nothing to fetch — build `{ kind: "lottie", data }` yourself and mount it. In
+ * that case the Lottie engine won't have loaded via this function, so import and
+ * call `registerLottieEngine()` (module level) where you do so.
  *
- * ```ts
- * const prepared = await unzipAnimation("/promo.zip");
- * const anim = loadAnimation({ container, animation: prepared, loop: true });
- * ```
+ * Both engines are code-split behind the dynamic imports here, so nothing pulls
+ * a rendering engine into an app's static bundle through this module.
  */
 export async function unzipAnimation(
-  src: string | Record<string, unknown>,
+  src: string,
   options: UnzipAnimationOptions = {},
 ): Promise<PreparedAnimation> {
   if (resolveFormat(src, options.format) === "remotion") {
-    if (typeof src !== "string") {
-      throw new Error(
-        "[remotion-animation] a Remotion (.zip) animation needs a URL `src`, not a parsed object.",
-      );
-    }
     const { prepareRemotion } = await import("./remotion/mount.js");
     return prepareRemotion(src);
   }
-  // LOTTIE (TEMPORARY): when Lottie support is dropped, delete this branch and
-  // the `src/lottie/` folder; `.zip` (Remotion) becomes the only path.
   const { prepareLottie } = await import("./lottie/mount.js");
-  return prepareLottie(src, options.transform);
+  return prepareLottie(src);
 }
 
 /**
  * Mount a {@link PreparedAnimation} into a container and return a controllable
  * {@link AnimationHandle} shaped exactly like a lottie-web `AnimationItem`.
  *
- * This is the **synchronous** half — all the async work already happened in
- * {@link unzipAnimation}. It stays backend-free (it just invokes the prepared
- * animation's own `mount`), so importing it never pulls in a backend.
+ * **Synchronous.** It looks the engine up by `kind` in the registry and calls
+ * it, importing no engine itself. The engine must be registered first —
+ * {@link unzipAnimation} does that for URL sources; `registerLottieEngine()`
+ * does it for raw Lottie JSON.
  *
  * ```ts
  * const anim = loadAnimation({ container, animation: prepared, loop: true });
  * anim.setSpeed(2);
- * anim.goToAndStop(30, true);
  * anim.destroy();
  * ```
  */
 export function loadAnimation(config: LoadAnimationConfig): AnimationHandle {
   const { container, animation, ...mountConfig } = config;
-  return animation.mount(container, mountConfig);
+  return getEngine(animation.kind)(container, animation, mountConfig);
 }
 
 function resolveFormat(
-  src: string | Record<string, unknown>,
+  src: string,
   format: UnzipAnimationOptions["format"] = "auto",
 ): "remotion" | "lottie" {
   if (format !== "auto") return format;
-  // A parsed object is always Lottie JSON; only a URL can be a Remotion zip.
-  if (typeof src === "string" && isZip(src)) return "remotion";
-  return "lottie";
+  return isZip(src) ? "remotion" : "lottie";
 }
 
 function isZip(src: string): boolean {

@@ -1,15 +1,21 @@
 /**
  * LOTTIE (TEMPORARY) — see the header note in `./decode.ts`.
  *
- * `prepareLottie` does the async half (fetch + decode + transform) and returns a
- * prepared animation whose `mount` runs lottie-web synchronously. lottie-web's
- * `AnimationItem` already *is* the handle contract, so the handle is a thin
- * delegating shell.
+ * `registerLottieEngine()` registers the "lottie" engine (see
+ * `core/registry.ts`). Importing this module is what pulls lottie-web into a
+ * bundle — so it stays out of the package core; a consumer that mounts raw
+ * Lottie JSON imports + calls `registerLottieEngine` at module level to opt in
+ * (statically) exactly where it's needed. `unzipAnimation` reaches it lazily via
+ * dynamic import for URL sources.
+ *
+ * lottie-web's `AnimationItem` already *is* the handle contract, so the handle
+ * is a thin delegating shell.
  */
 import lottieWeb from "lottie-web";
 import type { AnimationItem } from "lottie-web";
-import { loadLottie, type LottieData } from "./decode.js";
-import type { MountConfig, PreparedLottieAnimation } from "../core/config.js";
+import { loadLottie } from "./decode.js";
+import { registerEngine, type EngineMount } from "../core/registry.js";
+import type { PreparedLottieAnimation } from "../core/config.js";
 import type {
   AnimationDirection,
   AnimationEventCallback,
@@ -19,37 +25,43 @@ import type {
   AnimationSegment,
 } from "../core/handle.js";
 
-/** Fetch + decode (+ transform) a Lottie source into a ready-to-mount animation. */
-export async function prepareLottie(
-  src: string | Record<string, unknown>,
-  transform?: (data: LottieData) => LottieData,
-): Promise<PreparedLottieAnimation> {
-  let data: LottieData =
-    typeof src === "string" ? await loadLottie(src) : (src as LottieData);
-  if (transform) data = transform(data);
-
-  return {
-    kind: "lottie",
-    data,
-    mount(container: HTMLElement, config: MountConfig = {}): AnimationHandle {
-      const item = lottieWeb.loadAnimation({
-        container,
-        renderer: config.renderer ?? "svg",
-        loop: config.loop ?? true,
-        autoplay: config.autoplay ?? true,
-        name: config.name,
-        assetsPath: config.assetsPath,
-        initialSegment: config.initialSegment,
-        animationData: data,
-      });
-      if (config.speed !== undefined && config.speed !== 1) {
-        item.setSpeed(config.speed);
-      }
-      if (config.direction === -1) item.setDirection(-1);
-      return makeLottieHandle(item);
-    },
-  };
+/**
+ * Register the Lottie engine. Import + call this at module level where you mount
+ * raw Lottie JSON (e.g. the top of a component file): importing it pulls
+ * lottie-web into that bundle, and calling it registers the engine, so
+ * `{ kind: "lottie", data }` mounts synchronously with no async step.
+ * `prepareLottie` calls it for URL sources.
+ */
+export function registerLottieEngine(): void {
+  registerEngine("lottie", mountLottie);
 }
+
+/** Fetch + decode a Lottie `.json`/`.lottie` URL into plain, ready-to-mount data. */
+export async function prepareLottie(
+  src: string,
+): Promise<PreparedLottieAnimation> {
+  registerLottieEngine();
+  return { kind: "lottie", data: await loadLottie(src) };
+}
+
+const mountLottie: EngineMount = (container, animation, config) => {
+  if (animation.kind !== "lottie") {
+    throw new Error("[remotion-animation] lottie engine got a non-lottie animation");
+  }
+  const item = lottieWeb.loadAnimation({
+    container,
+    renderer: config.renderer ?? "svg",
+    loop: config.loop ?? true,
+    autoplay: config.autoplay ?? true,
+    name: config.name,
+    assetsPath: config.assetsPath,
+    initialSegment: config.initialSegment,
+    animationData: animation.data, // read at mount, so an in-place transform sticks
+  });
+  if (config.speed !== undefined && config.speed !== 1) item.setSpeed(config.speed);
+  if (config.direction === -1) item.setDirection(-1);
+  return makeLottieHandle(item);
+};
 
 function makeLottieHandle(item: AnimationItem): AnimationHandle {
   return {

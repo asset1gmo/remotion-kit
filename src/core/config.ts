@@ -1,7 +1,6 @@
 import type { ComponentType } from "react";
 import type {
   AnimationDirection,
-  AnimationHandle,
   AnimationSegment,
   RendererType,
 } from "./handle.js";
@@ -43,20 +42,19 @@ export type MountConfig = {
 };
 
 /**
- * A decoded, ready-to-mount animation produced by {@link unzipAnimation}. The
- * expensive, async work (fetch + unzip/decode/eval) is already done; `mount`
- * renders it synchronously.
- *
- * The `mount` closure captures the lazily-imported backend, which is why
- * `loadAnimation` can be synchronous *and* backend-free — an app that only ever
- * prepares Lottie never pulls the Remotion runtime into its bundle, and vice
- * versa. Prefer calling {@link loadAnimation} over `mount` directly.
+ * A decoded, ready-to-mount animation — plain data. The expensive async work
+ * (fetch + unzip/decode/eval) is already done; the matching engine (looked up by
+ * `kind` in the registry) renders it when you call {@link loadAnimation}.
  */
 export type PreparedLottieAnimation = {
   readonly kind: "lottie";
-  /** Decoded (and, if provided, transformed) Lottie JSON. */
-  readonly data: Record<string, unknown>;
-  mount(container: HTMLElement, config?: MountConfig): AnimationHandle;
+  /**
+   * Decoded Lottie JSON. **Mutable on purpose** — transform it in place
+   * (recolor, retime, …) before {@link loadAnimation}; the engine reads it at
+   * mount. Assign a *new* object rather than mutating the existing one: the
+   * decoded JSON is cached by URL, so in-place mutation would corrupt the cache.
+   */
+  data: Record<string, unknown>;
 };
 
 export type PreparedRemotionAnimation = {
@@ -65,7 +63,6 @@ export type PreparedRemotionAnimation = {
   readonly component: ComponentType<Record<string, never>>;
   /** The bundle manifest (size, fps, duration, runtime, …). */
   readonly manifest: AnimationManifest;
-  mount(container: HTMLElement, config?: MountConfig): AnimationHandle;
 };
 
 export type PreparedAnimation =
@@ -76,12 +73,6 @@ export type PreparedAnimation =
 export type UnzipAnimationOptions = {
   /** Override extension-based routing. Default `"auto"`. */
   format?: AnimationFormat;
-  /**
-   * LOTTIE (TEMPORARY) hook applied to the decoded Lottie JSON before it is
-   * stored on the prepared animation. Must return a new object — do not mutate
-   * the input (the decoded JSON is cached by URL). Ignored for Remotion `.zip`.
-   */
-  transform?: (data: Record<string, unknown>) => Record<string, unknown>;
 };
 
 /** Config for {@link loadAnimation} — the synchronous mount step. */

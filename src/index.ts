@@ -2,17 +2,25 @@
  * Loader / player mode — the browser entry (`@asset1gmo/remotion-kit`).
  *
  * Two-step API:
- *   1. `unzipAnimation(src, opts?)` — async; fetches + unzips/decodes the source
- *      into a `PreparedAnimation` (this is where the Lottie `transform` runs).
- *   2. `loadAnimation({ container, animation, ... })` — synchronous; mounts the
- *      prepared animation and returns a controllable `AnimationHandle`.
+ *   1. `unzipAnimation(url, opts?)` — async; fetches + unzips/decodes a URL into
+ *      a `PreparedAnimation` (plain data). For Lottie JSON you already hold, just
+ *      build `{ kind: "lottie", data }` yourself.
+ *   2. `loadAnimation({ container, animation, ... })` — synchronous; looks the
+ *      engine up by `kind` and mounts, returning a controllable `AnimationHandle`.
+ *      Transform Lottie JSON by editing `prepared.data` before this call.
  *
- * Both backends are lazy-loaded inside `unzipAnimation`, so nothing here pulls a
- * backend into the importing app's bundle until an animation of that kind is
- * actually prepared. The compressor mode lives at the separate `./compress`
- * entry and never reaches this graph.
+ * Neither engine is in the static bundle by default — `unzipAnimation` loads
+ * them lazily. To mount raw Lottie JSON synchronously, import + call
+ * `registerLottieEngine()` at module level where you do it: that pulls lottie-web
+ * into *that* bundle and registers the engine. The compressor mode lives at the
+ * separate `./compress` entry and never reaches this graph.
  */
 export { unzipAnimation, loadAnimation } from "./load-animation.js";
+
+// LOTTIE (TEMPORARY): opt-in static registration of the Lottie engine. Import +
+// call at module level to mount raw Lottie JSON synchronously; this is what pulls
+// lottie-web into that module's bundle (tree-shaken out where unused).
+export { registerLottieEngine } from "./lottie/mount.js";
 
 export type {
   AnimationHandle,

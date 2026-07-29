@@ -45,10 +45,10 @@ a second React breaks hooks). Everything else installs for you.
 
 Loading is **two steps** — an async decode, then a synchronous mount:
 
-1. **`unzipAnimation(src, options?)`** — async. Fetches and unzips/decodes the
-   source (dotLottie → JSON, Remotion `.zip` → evaluated component). All the I/O
-   lives here, and so does the Lottie `transform` hook. Returns a
-   `PreparedAnimation`.
+1. **`unzipAnimation(url, options?)`** — async. Fetches and unzips/decodes a
+   **URL** (dotLottie/`.json` → Lottie JSON, Remotion `.zip` → evaluated
+   component) and loads the matching rendering engine. Returns a
+   `PreparedAnimation` (plain data). All the network I/O lives here.
 2. **`loadAnimation({ container, animation, … })`** — synchronous. Mounts the
    prepared animation and returns an **`AnimationHandle`** — a controllable
    instance shaped **exactly like a lottie-web `AnimationItem`**: same methods
@@ -82,41 +82,65 @@ off();                            // addEventListener returns its unsubscribe
 anim.destroy();                   // tears down the backend + empties the container
 ```
 
-`prepared` also exposes what was decoded — `.data` (Lottie JSON) or
-`.component` + `.manifest` (Remotion) — and can be mounted more than once.
+`prepared` is plain data — `.data` (Lottie JSON) or `.component` + `.manifest`
+(Remotion) — and can be mounted more than once.
+
+### Lottie JSON you already have
+
+`unzipAnimation` only takes URLs. If you already hold decoded Lottie JSON (a
+bundled `.json` import, an API payload), there's nothing to fetch — build the
+prepared object yourself and mount it synchronously. Since `unzipAnimation` never
+runs, register the engine once by importing + calling **`registerLottieEngine()`**
+at module level. That import is what statically bundles `lottie-web` into *that*
+module (only where you opt in), and makes the mount fully synchronous:
+
+```ts
+import { registerLottieEngine, loadAnimation } from "@asset1gmo/remotion-kit";
+
+registerLottieEngine(); // module level — pulls in lottie-web here, registers the engine
+
+// ...later, at mount — no async:
+loadAnimation({ container: el, animation: { kind: "lottie", data: myLottieJson } });
+```
+
+(URL sources don't need this — `unzipAnimation` registers the engine itself.)
+
+### Recoloring / theming (Lottie only)
+
+There's no `transform` option — transform the decoded JSON yourself and mount it.
+`prepared.data` is mutable, and the engine reads it at mount, so assign a new
+object before `loadAnimation`:
+
+```ts
+const prepared = await unzipAnimation("/animations/logo.lottie");
+if (prepared.kind === "lottie") {
+  prepared.data = recolorToTheme(prepared.data); // a NEW object — don't mutate in place
+}
+loadAnimation({ container: el, animation: prepared });
+```
 
 ### Routing by format
 
-`src` is routed by extension; override with `options.format` for URLs that don't
+`url` is routed by extension; override with `options.format` for URLs that don't
 carry one (signed CDN links, blob URLs, API endpoints):
 
-| `src` | Format | Backend |
+| `url` | Format | Backend |
 | --- | --- | --- |
 | `*.zip` | Remotion code bundle | Remotion `<Player>` in the container |
 | `*.json` | raw Lottie JSON | lottie-web |
 | `*.lottie` | dotLottie (zip of Lottie JSON, v1 + v2, images inlined) | lottie-web |
-| a parsed object | Lottie JSON | lottie-web |
 
 ```ts
 const prepared = await unzipAnimation(signedUrl, { format: "remotion" });
 ```
 
-Each backend is **code-split behind the dynamic import inside `unzipAnimation`**,
-so an app that only ever loads `.zip` never ships lottie-web, and an app that only
-ever loads Lottie never ships the Remotion runtime (it downloads on demand when
-the first `.zip` is prepared). Because `loadAnimation` only invokes the prepared
-animation's own `mount`, it stays backend-free and synchronous.
-
-### Recoloring / theming (Lottie only)
-
-The `transform` hook runs during `unzipAnimation`, on the decoded JSON, before
-mount:
-
-```ts
-const prepared = await unzipAnimation("/animations/logo.lottie", {
-  transform: (data) => recolorToTheme(data), // must return a NEW object
-});
-```
+Each backend registers a mount function, and `loadAnimation` looks it up by
+`kind` — so `loadAnimation` itself imports no engine. **Neither engine is in the
+static bundle by default:** `unzipAnimation` loads them via dynamic `import()`, so
+a Lottie-only app never ships Remotion, and an app that only loads URLs ships
+neither statically. `lottie-web` becomes static **only** in a module that imports
+`registerLottieEngine` — the opt-in for mounting raw JSON synchronously — so you
+pay for it exactly where you use it.
 
 ### Remotion vs lottie-web parity notes
 
@@ -128,8 +152,8 @@ The handle is faithful, with a few mechanism differences on the Remotion backend
   `inFrame`/`outFrame`.
 - **`setSpeed`** re-renders the Player.
 - **Marker names** (string args to `goToAndStop`/`goToAndPlay`) and a **numeric
-  `loop` count** are lottie-only; `renderer`/`assetsPath`/`transform` config is
-  ignored for `.zip`.
+  `loop` count** are lottie-only; `renderer`/`assetsPath` config is ignored for
+  `.zip`.
 
 > **Lottie support is temporary.** It exists only until prod animations finish
 > migrating to Remotion. When that's done, deleting `src/lottie/`, the `.json`/
