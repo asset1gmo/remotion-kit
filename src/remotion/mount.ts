@@ -1,5 +1,4 @@
-import { createElement, createRef } from "react";
-import { flushSync } from "react-dom";
+import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Player, type PlayerRef } from "@remotion/player";
 import { loadBundle, type LoadedBundle } from "./bundle.js";
@@ -37,25 +36,14 @@ const mountRemotion: EngineMount = (container, animation, config) => {
       "[remotion-animation] remotion engine got a non-remotion animation",
     );
   }
-  const ref = createRef<PlayerRef>();
   const root = createRoot(container);
   const handle = new RemotionHandle(
-    ref,
     root,
     animation.manifest,
     animation.component,
     config,
   );
-  // flushSync forces React to render + commit synchronously, so the PlayerRef is
-  // attached by the time flushSync returns — no polling.
-  flushSync(() => handle.render());
-  if (!ref.current) {
-    root.unmount();
-    throw new Error(
-      "[remotion-animation] Remotion Player did not mount synchronously",
-    );
-  }
-  handle.onMounted();
+  handle.render();
   return handle;
 };
 
@@ -66,6 +54,12 @@ const mountRemotion: EngineMount = (container, animation, config) => {
  * (`setDirection(-1)`) has no native equivalent, so it is driven by a
  * `requestAnimationFrame` loop that seeks backwards; the native Player is kept
  * paused while that runs. Segments map onto the Player's `inFrame`/`outFrame`.
+ *
+ * `loadAnimation` is synchronous but React's mount is not, so the handle is
+ * usable before the `<Player>` exists: commands issued in that window are queued
+ * by {@link withPlayer} and replayed, in order, the moment the ref attaches.
+ * React attaches refs during commit, so the queue drains before the browser
+ * paints — a `goToAndStop` right after mounting still shows its frame first.
  */
 class RemotionHandle implements AnimationHandle {
   readonly kind = "remotion" as const;
@@ -73,6 +67,7 @@ class RemotionHandle implements AnimationHandle {
   private readonly em = createEmitter();
   private readonly fps: number;
   private readonly duration: number;
+  private readonly muted: boolean;
 
   private rate: number;
   private direction: AnimationDirection;
@@ -80,6 +75,9 @@ class RemotionHandle implements AnimationHandle {
   private inFrame: number | null = null;
   private outFrame: number | null = null;
 
+  private playerRef: PlayerRef | null = null;
+  private queued: ((player: PlayerRef) => void)[] = [];
+  private destroyed = false;
   private mounted = false;
   private playing: boolean;
   private loops = 0;
@@ -88,12 +86,12 @@ class RemotionHandle implements AnimationHandle {
   private reverseLastTs = 0;
 
   constructor(
-    private readonly ref: { current: PlayerRef | null },
     private readonly root: Root,
     private readonly manifest: AnimationManifest,
     private readonly component: LoadedBundle["component"],
     config: MountConfig,
   ) {
+    this.muted = config.muted ?? true;
     this.fps = manifest.fps;
     this.duration = manifest.durationInFrames;
     this.rate = config.speed ?? 1;
@@ -113,7 +111,7 @@ class RemotionHandle implements AnimationHandle {
   render(): void {
     this.root.render(
       createElement(Player, {
-        ref: this.ref as never,
+        ref: this.attach as never,
         component: this.component,
         durationInFrames: this.duration,
         fps: this.fps,
@@ -126,6 +124,14 @@ class RemotionHandle implements AnimationHandle {
         playbackRate: this.rate,
         inFrame: this.inFrame,
         outFrame: this.outFrame,
+        // Not cosmetic — this is what lets an animation start on its own. The
+        // Player builds a shared AudioContext whenever it is unmuted, and then
+        // advances no frame at all until that context has actually resumed.
+        // Browsers refuse to resume one before the page has been interacted
+        // with, so an unmuted Player sits frozen on frame 0 after a reload and
+        // only starts once the visitor happens to click something. Muted by
+        // default because these are UI animations; see `muted` in MountConfig.
+        initiallyMuted: this.muted,
         controls: false,
         clickToPlay: false,
         showVolumeControls: false,
@@ -135,13 +141,26 @@ class RemotionHandle implements AnimationHandle {
     );
   }
 
-  /** Wire up native Player events once the ref exists, then announce load. */
-  onMounted(): void {
-    const p = this.player();
-    p.addEventListener("frameupdate", this.onFrameUpdate);
-    p.addEventListener("ended", this.onEnded);
+  /**
+   * Ref callback — React hands us the Player as it commits. Stable identity, so
+   * re-renders don't re-run it; it fires with `null` only on unmount.
+   */
+  private attach = (player: PlayerRef | null): void => {
+    if (!player || this.playerRef || this.destroyed) return;
+    this.playerRef = player;
+    this.onMounted(player);
+  };
+
+  /** Wire up native Player events, drain the queue, then announce load. */
+  private onMounted(player: PlayerRef): void {
+    player.addEventListener("frameupdate", this.onFrameUpdate);
+    player.addEventListener("ended", this.onEnded);
     this.mounted = true;
-    this.prevFrame = p.getCurrentFrame();
+    this.prevFrame = player.getCurrentFrame();
+
+    const queued = this.queued;
+    this.queued = [];
+    for (const fn of queued) fn(player);
 
     // Parity with lottie-web's load sequence.
     this.em.emit("config_ready", undefined);
@@ -152,8 +171,15 @@ class RemotionHandle implements AnimationHandle {
     if (this.playing && this.direction === -1) this.startReverse();
   }
 
+  /** Act on the Player now, or as soon as it exists. */
+  private withPlayer(fn: (player: PlayerRef) => void): void {
+    if (this.destroyed) return;
+    if (this.playerRef) fn(this.playerRef);
+    else this.queued.push(fn);
+  }
+
   private player(): PlayerRef {
-    const p = this.ref.current;
+    const p = this.playerRef;
     if (!p) throw new Error("[remotion-animation] Player is not mounted");
     return p;
   }
@@ -209,34 +235,36 @@ class RemotionHandle implements AnimationHandle {
   // ── Reverse driver ────────────────────────────────────────────────────────
   private startReverse(): void {
     this.stopReverse();
-    this.player().pause();
-    this.reverseLastTs = performance.now();
-    const step = (ts: number): void => {
-      const dt = (ts - this.reverseLastTs) / 1000;
-      this.reverseLastTs = ts;
-      const lo = this.lo();
-      const hi = this.hi();
-      let frame = this.player().getCurrentFrame() - dt * this.fps * this.rate;
-      if (frame <= lo) {
-        if (this.loopEnabled) {
-          this.loops += 1;
-          this.emitLoopComplete();
-          frame = hi - (lo - frame);
-          if (frame < lo) frame = hi;
-        } else {
-          this.player().seekTo(lo);
-          this.emitEnterFrame(lo);
-          this.playing = false;
-          this.emitComplete();
-          this.reverseRAF = 0;
-          return;
+    this.withPlayer((player) => {
+      player.pause();
+      this.reverseLastTs = performance.now();
+      const step = (ts: number): void => {
+        const dt = (ts - this.reverseLastTs) / 1000;
+        this.reverseLastTs = ts;
+        const lo = this.lo();
+        const hi = this.hi();
+        let frame = player.getCurrentFrame() - dt * this.fps * this.rate;
+        if (frame <= lo) {
+          if (this.loopEnabled) {
+            this.loops += 1;
+            this.emitLoopComplete();
+            frame = hi - (lo - frame);
+            if (frame < lo) frame = hi;
+          } else {
+            player.seekTo(lo);
+            this.emitEnterFrame(lo);
+            this.playing = false;
+            this.emitComplete();
+            this.reverseRAF = 0;
+            return;
+          }
         }
-      }
-      this.player().seekTo(frame);
-      this.emitEnterFrame(frame);
+        player.seekTo(frame);
+        this.emitEnterFrame(frame);
+        this.reverseRAF = requestAnimationFrame(step);
+      };
       this.reverseRAF = requestAnimationFrame(step);
-    };
-    this.reverseRAF = requestAnimationFrame(step);
+    });
   }
 
   private stopReverse(): void {
@@ -253,7 +281,7 @@ class RemotionHandle implements AnimationHandle {
         console.warn(
           `[remotion-animation] marker names ("${value}") are not supported for Remotion animations; ignoring seek.`,
         );
-        return this.player().getCurrentFrame();
+        return this.currentFrame;
       }
       value = n;
     }
@@ -270,6 +298,7 @@ class RemotionHandle implements AnimationHandle {
   get frameMult(): number {
     return this.fps / 1000;
   }
+  /** Throws until the Player has mounted — gate on `isLoaded` or `DOMLoaded`. */
   get native(): PlayerRef {
     return this.player();
   }
@@ -277,7 +306,7 @@ class RemotionHandle implements AnimationHandle {
     return this.mounted;
   }
   get currentFrame(): number {
-    return this.ref.current?.getCurrentFrame() ?? this.lo();
+    return this.playerRef?.getCurrentFrame() ?? this.lo();
   }
   get currentRawFrame(): number {
     return this.currentFrame;
@@ -319,28 +348,30 @@ class RemotionHandle implements AnimationHandle {
     if (this.direction === -1) this.startReverse();
     else {
       this.stopReverse();
-      this.player().play();
+      this.withPlayer((player) => player.play());
     }
   }
   pause(): void {
     this.playing = false;
     this.stopReverse();
-    this.player().pause();
+    this.withPlayer((player) => player.pause());
   }
   stop(): void {
     this.pause();
-    this.player().seekTo(this.lo());
+    this.withPlayer((player) => player.seekTo(this.lo()));
   }
   togglePause(): void {
     if (this.playing) this.pause();
     else this.play();
   }
   goToAndStop(value: number | string, isFrame?: boolean): void {
+    const frame = this.toFrame(value, isFrame);
     this.pause();
-    this.player().seekTo(this.toFrame(value, isFrame));
+    this.withPlayer((player) => player.seekTo(frame));
   }
   goToAndPlay(value: number | string, isFrame?: boolean): void {
-    this.player().seekTo(this.toFrame(value, isFrame));
+    const frame = this.toFrame(value, isFrame);
+    this.withPlayer((player) => player.seekTo(frame));
     this.play();
   }
   setSpeed(speed: number): void {
@@ -354,7 +385,7 @@ class RemotionHandle implements AnimationHandle {
     if (direction === -1) this.startReverse();
     else {
       this.stopReverse();
-      this.player().play();
+      this.withPlayer((player) => player.play());
     }
   }
   setLoop(isLooping: boolean): void {
@@ -374,7 +405,7 @@ class RemotionHandle implements AnimationHandle {
       Array.isArray(segments[0]) ? segments[0] : segments
     ) as AnimationSegment;
     this.setSegment(seg[0], seg[1]);
-    this.player().seekTo(seg[0]);
+    this.withPlayer((player) => player.seekTo(seg[0]));
     this.play();
   }
   resetSegments(_forceFlag?: boolean): void {
@@ -393,12 +424,16 @@ class RemotionHandle implements AnimationHandle {
     // container is enough. Provided for API parity.
   }
   hide(): void {
-    const el = this.player().getContainerNode();
-    if (el) el.style.display = "none";
+    this.withPlayer((player) => {
+      const el = player.getContainerNode();
+      if (el) el.style.display = "none";
+    });
   }
   show(): void {
-    const el = this.player().getContainerNode();
-    if (el) el.style.display = "";
+    this.withPlayer((player) => {
+      const el = player.getContainerNode();
+      if (el) el.style.display = "";
+    });
   }
 
   // ── Events ─────────────────────────────────────────────────────────────────
@@ -422,14 +457,26 @@ class RemotionHandle implements AnimationHandle {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.stopReverse();
-    const p = this.ref.current;
+    this.queued = [];
+    const p = this.playerRef;
     if (p) {
       p.removeEventListener("frameupdate", this.onFrameUpdate);
       p.removeEventListener("ended", this.onEnded);
     }
+    this.playerRef = null;
+    this.mounted = false;
     this.em.emit("destroy", { type: "destroy" });
     this.em.clear();
-    this.root.unmount();
+
+    // Deferred for the same reason the mount is: React refuses to tear a root
+    // down while it is rendering, and consumers normally destroy from an effect
+    // cleanup — which is exactly that. A microtask lands after the current
+    // commit but still before any timer, so a container can be re-mounted on
+    // the next task without the old root racing it.
+    const root = this.root;
+    queueMicrotask(() => root.unmount());
   }
 }

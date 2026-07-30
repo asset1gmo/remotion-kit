@@ -85,6 +85,26 @@ anim.destroy();                   // tears down the backend + empties the contai
 `prepared` is plain data — `.data` (Lottie JSON) or `.component` + `.manifest`
 (Remotion) — and can be mounted more than once.
 
+`loadAnimation` returns its handle immediately, but a Remotion animation mounts
+through React, which commits on its own schedule. The handle covers that gap:
+commands issued before the `<Player>` exists are queued and replayed, in order,
+the moment it does — so `goToAndStop` on the line after `loadAnimation` still
+shows its frame first. Read `isLoaded` (or wait for `DOMLoaded`) if you need to
+know; only `.native` requires a mounted Player, and throws until then. Because of
+this, **`loadAnimation` is safe to call from a React effect** — as is `destroy`,
+which defers its unmount rather than tearing a root down mid-render.
+
+### Sound is off by default
+
+Remotion's Player builds a shared `AudioContext` whenever it is unmuted, and
+advances no frame until that context has actually resumed — which browsers won't
+allow until the page has been interacted with. An unmuted animation therefore
+sits frozen on frame 0 after a page load and starts only once the visitor happens
+to click something, which reads as "sometimes it animates, sometimes it doesn't".
+
+Animations are mounted muted so they simply play. Pass `muted: false` if a
+composition genuinely has sound, and expect that trade-off back.
+
 ### Lottie JSON you already have
 
 `unzipAnimation` only takes URLs. If you already hold decoded Lottie JSON (a
@@ -156,6 +176,9 @@ The handle is faithful, with a few mechanism differences on the Remotion backend
 - **Segments** (`setSegment`/`playSegments`/`resetSegments`) map onto the Player's
   `inFrame`/`outFrame`.
 - **`setSpeed`** re-renders the Player.
+- **Mounting is asynchronous** (React commits it), so early commands are queued
+  rather than applied instantly — see above. lottie-web mounts synchronously.
+- **`muted`** is Remotion-only, and defaults to `true`.
 - **Marker names** (string args to `goToAndStop`/`goToAndPlay`) and a **numeric
   `loop` count** are lottie-only; `renderer`/`assetsPath` config is ignored for
   `.zip`.

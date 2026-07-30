@@ -31,6 +31,15 @@ export type MountConfig = {
   initialSegment?: AnimationSegment;
   /** Name reported by `handle.name`. Defaults to the manifest id / filename. */
   name?: string;
+  /**
+   * Default `true`, and worth leaving alone unless the composition really has
+   * sound. Remotion's Player builds a shared `AudioContext` whenever it is
+   * unmuted, and then advances no frame until that context has actually
+   * resumed. Browsers won't resume one until the page has been interacted with,
+   * so an unmuted animation stays frozen on frame 0 after a page load and only
+   * starts once the visitor clicks something. Remotion only.
+   */
+  muted?: boolean;
 
   // ───────────────────────────────────────────────────────────────────────────
   // LOTTIE (TEMPORARY) — ignored by the Remotion backend.
