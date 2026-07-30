@@ -91,11 +91,13 @@ anim.destroy();                   // tears down the backend + empties the contai
 bundled `.json` import, an API payload), there's nothing to fetch — build the
 prepared object yourself and mount it synchronously. Since `unzipAnimation` never
 runs, register the engine once by importing + calling **`registerLottieEngine()`**
-at module level. That import is what statically bundles `lottie-web` into *that*
-module (only where you opt in), and makes the mount fully synchronous:
+at module level. It lives on a **separate `/lottie` entry** because importing it
+pulls in `lottie-web` (which touches `document` at import) — so it's opt-in and
+**client-only**, keeping the main entry SSR-safe:
 
 ```ts
-import { registerLottieEngine, loadAnimation } from "@asset1gmo/remotion-kit";
+import { loadAnimation } from "@asset1gmo/remotion-kit";
+import { registerLottieEngine } from "@asset1gmo/remotion-kit/lottie";
 
 registerLottieEngine(); // module level — pulls in lottie-web here, registers the engine
 
@@ -103,7 +105,8 @@ registerLottieEngine(); // module level — pulls in lottie-web here, registers 
 loadAnimation({ container: el, animation: { kind: "lottie", data: myLottieJson } });
 ```
 
-(URL sources don't need this — `unzipAnimation` registers the engine itself.)
+(URL sources don't need this — `unzipAnimation` registers the engine itself. Only
+import `/lottie` from a client module; it is not SSR-safe.)
 
 ### Recoloring / theming (Lottie only)
 
@@ -137,10 +140,12 @@ const prepared = await unzipAnimation(signedUrl, { format: "remotion" });
 Each backend registers a mount function, and `loadAnimation` looks it up by
 `kind` — so `loadAnimation` itself imports no engine. **Neither engine is in the
 static bundle by default:** `unzipAnimation` loads them via dynamic `import()`, so
-a Lottie-only app never ships Remotion, and an app that only loads URLs ships
-neither statically. `lottie-web` becomes static **only** in a module that imports
-`registerLottieEngine` — the opt-in for mounting raw JSON synchronously — so you
-pay for it exactly where you use it.
+a Lottie-only app never ships Remotion, an app that only loads URLs ships neither
+statically, and the main entry stays **SSR-safe** (it never evaluates `lottie-web`,
+which touches `document` at import). `lottie-web` becomes static **only** in a
+module that imports `registerLottieEngine` from the separate `/lottie` entry — the
+client-only opt-in for mounting raw JSON synchronously — so you pay for it exactly
+where you use it.
 
 ### Remotion vs lottie-web parity notes
 

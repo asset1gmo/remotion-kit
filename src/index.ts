@@ -10,17 +10,13 @@
  *      Transform Lottie JSON by editing `prepared.data` before this call.
  *
  * Neither engine is in the static bundle by default — `unzipAnimation` loads
- * them lazily. To mount raw Lottie JSON synchronously, import + call
- * `registerLottieEngine()` at module level where you do it: that pulls lottie-web
- * into *that* bundle and registers the engine. The compressor mode lives at the
- * separate `./compress` entry and never reaches this graph.
+ * them lazily, so this entry is SSR-safe (it never evaluates lottie-web, which
+ * touches `document` at import). To mount raw Lottie JSON synchronously, import
+ * `registerLottieEngine` from the separate `@asset1gmo/remotion-kit/lottie` entry
+ * and call it at module level in a client module. The compressor mode lives at
+ * the separate `./compress` entry and never reaches this graph.
  */
 export { unzipAnimation, loadAnimation } from "./load-animation.js";
-
-// LOTTIE (TEMPORARY): opt-in static registration of the Lottie engine. Import +
-// call at module level to mount raw Lottie JSON synchronously; this is what pulls
-// lottie-web into that module's bundle (tree-shaken out where unused).
-export { registerLottieEngine } from "./lottie/mount.js";
 
 export type {
   AnimationHandle,

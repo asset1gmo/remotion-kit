@@ -20,6 +20,10 @@
     "./compress": {
       "types": "./dist/compress.d.ts",
       "import": "./dist/compress.js"
+    },
+    "./lottie": {
+      "types": "./dist/register-lottie.d.ts",
+      "import": "./dist/register-lottie.js"
     }
   },
   "bin": {
