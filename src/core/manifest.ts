@@ -44,6 +44,38 @@ export type AnimationMeta = {
   height: number;
   fps: number;
   durationInFrames: number;
+  /** Fonts the composition draws with — see {@link AnimationFont}. */
+  fonts?: AnimationFont[];
+};
+
+/**
+ * A webfont a composition draws with.
+ *
+ * Compositions position `<text>` at absolute coordinates measured for a specific
+ * face. Laid out against a fallback — even for the moment before the real font
+ * arrives — glyph advances differ enough that labels overrun their boxes and
+ * anything past the viewBox edge is clipped. So an animation has to *declare*
+ * what it needs, and the loader has to have it in hand before the composition
+ * renders at all.
+ *
+ * Declared here rather than passed in by the caller on purpose: a consuming app
+ * has no business knowing that one animation happens to draw in Poppins 600.
+ * Carrying it in the manifest means the dependency travels with the zip and
+ * cannot be forgotten when the animation is reused somewhere else.
+ */
+export type AnimationFont = {
+  /** CSS family name, exactly as the composition names it. */
+  family: string;
+  /**
+   * URL of a font file — typically a CDN `.woff2`. Kept as a URL rather than
+   * packed into the zip so bundles stay a couple of KB and one fetch serves
+   * every animation on the page.
+   */
+  src: string;
+  /** Defaults to `"400"`. */
+  weight?: string;
+  /** Defaults to `"normal"`. */
+  style?: string;
 };
 
 /** Full manifest stored inside every zip: the authored meta plus build output. */

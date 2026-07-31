@@ -28,6 +28,7 @@ import {
   BUNDLE_FORMAT,
   RUNTIME_EXTERNALS,
   type AnimationManifest,
+  type AnimationFont,
 } from "../core/manifest.js";
 
 const ASSET_EXTS = new Set([
@@ -48,6 +49,8 @@ export type AnimationConfig = {
   height: number;
   fps: number;
   durationInFrames: number;
+  /** Fonts the composition draws with; copied verbatim into the zip manifest. */
+  fonts?: AnimationFont[];
 };
 
 export type CompressOptions = {
@@ -119,6 +122,8 @@ export async function compressAnimation(
     height: config.height,
     fps: config.fps,
     durationInFrames: config.durationInFrames,
+    // Copied verbatim: the loader resolves these before the composition renders.
+    fonts: config.fonts,
     entry: "animation.js",
     assets,
     runtime: { remotion: options.remotionVersion ?? resolveRemotionVersion() },
