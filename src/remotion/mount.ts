@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { Player, type PlayerRef } from "@remotion/player";
 import { loadBundle, type LoadedBundle } from "./bundle.js";
 import { createEmitter } from "../core/emitter.js";
-import { ensureFonts } from "../core/fonts.js";
 import { registerEngine, type EngineMount } from "../core/registry.js";
 import type { AnimationManifest } from "../core/manifest.js";
 import type { MountConfig, PreparedRemotionAnimation } from "../core/config.js";
@@ -28,10 +27,6 @@ export async function prepareRemotion(
 ): Promise<PreparedRemotionAnimation> {
   registerEngine("remotion", mountRemotion);
   const { component, manifest } = await loadBundle(src);
-  // Before returning, not after: `loadAnimation` mounts synchronously off this
-  // result, so anything the composition needs at first layout has to be settled
-  // by now. See `ensureFonts`.
-  await ensureFonts(manifest.fonts);
   return { kind: "remotion", component, manifest };
 }
 

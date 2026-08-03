@@ -18,14 +18,6 @@
  */
 export { unzipAnimation, loadAnimation } from "./load-animation.js";
 
-/**
- * Resolve an animation's declared fonts. `unzipAnimation` already calls this, so
- * the zip path needs nothing — it is exported for callers that render a
- * composition themselves (a dev-mode player importing the source directly) and
- * need the same guarantee before first layout.
- */
-export { ensureFonts } from "./core/fonts.js";
-
 export type {
   AnimationHandle,
   // lottie-web-parity types, vendored so they outlive Lottie support:
@@ -52,8 +44,4 @@ export type {
   PreparedRemotionAnimation,
 } from "./core/config.js";
 
-export type {
-  AnimationManifest,
-  AnimationMeta,
-  AnimationFont,
-} from "./core/manifest.js";
+export type { AnimationManifest, AnimationMeta } from "./core/manifest.js";
